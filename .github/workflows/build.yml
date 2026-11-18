@@ -174,7 +174,7 @@ jobs:
 
             if [[ "$CONFLICTS" != "$CONFLICT_FILE" ]]; then
               echo "::error::Upstream merge has unexpected conflicts:"
-              printf '%s\\n' "$CONFLICTS"
+              printf '%s\n' "$CONFLICTS"
               echo "::error::Only $CONFLICT_FILE may be resolved automatically. No source-code conflicts will be discarded."
               exit 1
             fi
