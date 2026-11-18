@@ -4,6 +4,16 @@ name: NxNative - Generic IPA Builder
 on:
   workflow_dispatch:
     inputs:
+      game_parts:
+        description: "Number of RAR parts in the base game archive"
+        required: true
+        type: choice
+        default: "1"
+        options:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
       device:
         description: "Choose the target device and texture support path"
         required: true
@@ -32,6 +42,41 @@ jobs:
     timeout-minutes: 360
 
     steps:
+
+      # ================================================
+      # VALIDATE GAME ARCHIVE PART SECRETS FIRST
+      # ================================================
+
+      - name: Validate game archive parts
+        env:
+          GAME_PARTS: ${{ inputs.game_parts }}
+          GAME_URL_1: ${{ secrets.Game_URL_1 }}
+          GAME_URL_2: ${{ secrets.Game_URL_2 }}
+          GAME_URL_3: ${{ secrets.Game_URL_3 }}
+          GAME_URL_4: ${{ secrets.Game_URL_4 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$GAME_PARTS" in
+            1|2|3|4) ;;
+            *)
+              echo "::error::Invalid game part count: $GAME_PARTS. Choose 1, 2, 3, or 4."
+              exit 1
+              ;;
+          esac
+
+          for part in $(seq 1 "$GAME_PARTS"); do
+            variable="GAME_URL_$part"
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Game archive is set to $GAME_PARTS part(s), but the required secret $variable is missing or empty."
+              echo "::error::Configure Game_URL_1 through Game_URL_$GAME_PARTS in repository Actions secrets, then rerun."
+              exit 1
+            fi
+            echo "Verified required game archive secret: $variable"
+          done
+
+          echo "All $GAME_PARTS required game archive part secret(s) are present."
 
       # ================================================
       # SELECT AND VERIFY THE REQUIRED METALFX SDK
@@ -172,9 +217,11 @@ jobs:
       - name: Prepare download cache
         id: cache-key
         env:
-          GAME_URL: ${{ secrets.Game_URL }}
+          GAME_PARTS: ${{ inputs.game_parts }}
           GAME_URL_1: ${{ secrets.Game_URL_1 }}
           GAME_URL_2: ${{ secrets.Game_URL_2 }}
+          GAME_URL_3: ${{ secrets.Game_URL_3 }}
+          GAME_URL_4: ${{ secrets.Game_URL_4 }}
           UPDATE_URL: ${{ secrets.Update_URL }}
           DLC_URL: ${{ secrets.DLC_URL }}
         shell: bash
@@ -185,25 +232,22 @@ jobs:
           import hashlib
           import os
 
-          urls = [
-              os.environ.get("GAME_URL_1", "").strip(),
-              os.environ.get("GAME_URL_2", "").strip(),
-              os.environ.get("GAME_URL", "").strip(),
+          part_count = int(os.environ["GAME_PARTS"])
+          game_urls = [
+              os.environ.get(f"GAME_URL_{i}", "").strip()
+              for i in range(1, part_count + 1)
+          ]
+
+          if any(not url for url in game_urls):
+              raise SystemExit(
+                  f"Missing one or more required Game_URL_1 through "
+                  f"Game_URL_{part_count} secrets."
+              )
+
+          urls = game_urls + [
               os.environ.get("UPDATE_URL", "").strip(),
               os.environ.get("DLC_URL", "").strip(),
           ]
-
-          if not (urls[0] and urls[1]) and not urls[2]:
-              raise SystemExit(
-                  "Configure both Game_URL_1 and Game_URL_2, "
-                  "or provide the single-part Game_URL secret."
-              )
-
-          if bool(urls[0]) != bool(urls[1]):
-              raise SystemExit(
-                  "Both Game_URL_1 and Game_URL_2 must be configured "
-                  "for a split base-game archive."
-              )
 
           cache_key = hashlib.sha256(
               "|".join(urls).encode()
@@ -231,9 +275,11 @@ jobs:
 
       - name: Download game files and decode keys
         env:
-          GAME_URL: ${{ secrets.Game_URL }}
+          GAME_PARTS: ${{ inputs.game_parts }}
           GAME_URL_1: ${{ secrets.Game_URL_1 }}
           GAME_URL_2: ${{ secrets.Game_URL_2 }}
+          GAME_URL_3: ${{ secrets.Game_URL_3 }}
+          GAME_URL_4: ${{ secrets.Game_URL_4 }}
           UPDATE_URL: ${{ secrets.Update_URL }}
           DLC_URL: ${{ secrets.DLC_URL }}
           KEYS_BASE64: ${{ secrets.Keys_URL }}
@@ -306,18 +352,12 @@ jobs:
             echo "Saved $filename to download cache."
           }
 
-          if [[ -n "${GAME_URL_1:-}" || -n "${GAME_URL_2:-}" ]]; then
-            if [[ -z "${GAME_URL_1:-}" || -z "${GAME_URL_2:-}" ]]; then
-              echo "::error::Both Game_URL_1 and Game_URL_2 are required for a split base-game archive."
-              exit 1
-            fi
-
-            echo "Split base-game archive detected; downloading both RAR volumes."
-            download_file "$GAME_URL_1" "$WORK/game.part1.rar"
-            download_file "$GAME_URL_2" "$WORK/game.part2.rar"
-          else
-            download_file "$GAME_URL" "$WORK/game.download"
-          fi
+          echo "Downloading $GAME_PARTS base-game RAR part(s)."
+          for part in $(seq 1 "$GAME_PARTS"); do
+            variable="GAME_URL_$part"
+            url="${!variable}"
+            download_file "$url" "$WORK/game.part$part.rar"
+          done
 
           case "${CONTENT_SELECTION:-}" in
             "Base game only")
@@ -565,7 +605,7 @@ jobs:
           if (work / "game.part1.rar").exists():
               process_download("game", work / "game.part1.rar")
           else:
-              process_download("game")
+              raise SystemExit("The first base-game RAR part is missing.")
 
           process_download("update")
           process_download("dlc")
@@ -621,6 +661,8 @@ jobs:
             "$WORK/game.download" \
             "$WORK/game.part1.rar" \
             "$WORK/game.part2.rar" \
+            "$WORK/game.part3.rar" \
+            "$WORK/game.part4.rar" \
             "$WORK/update.download" \
             "$WORK/dlc.download"
 
@@ -868,6 +910,8 @@ jobs:
               "$WORK/game.download" \
               "$WORK/game.part1.rar" \
               "$WORK/game.part2.rar" \
+              "$WORK/game.part3.rar" \
+              "$WORK/game.part4.rar" \
               "$WORK/update.download" \
               "$WORK/dlc.download"; do
 
