@@ -167,8 +167,26 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if ! git merge --no-edit --no-ff "$UPSTREAM_SHA"; then
-            echo "::error::Could not merge latest upstream NxNative into the BC fallback branch. Resolve the conflict in the BC branch; the workflow will not discard either implementation."
-            exit 1
+            echo "Upstream merge reported conflicts; checking whether they are limited to the known game README."
+
+            CONFLICT_FILE="dm/games/01007EF00011E000/README.md"
+            CONFLICTS="$(git diff --name-only --diff-filter=U)"
+
+            if [[ "$CONFLICTS" != "$CONFLICT_FILE" ]]; then
+              echo "::error::Upstream merge has unexpected conflicts:"
+              printf '%s\\n' "$CONFLICTS"
+              echo "::error::Only $CONFLICT_FILE may be resolved automatically. No source-code conflicts will be discarded."
+              exit 1
+            fi
+
+            echo "The only conflict is $CONFLICT_FILE."
+            echo "Keeping the BC fallback branch's README so its device-specific notes are preserved."
+            git checkout --ours -- "$CONFLICT_FILE"
+            git add "$CONFLICT_FILE"
+
+            GIT_EDITOR=true git merge --continue
+
+            echo "Resolved the documentation-only conflict; all upstream source changes remain in the merge."
           fi
 
           MERGED_SHA="$(git rev-parse HEAD)"
