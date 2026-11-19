@@ -50,11 +50,11 @@ jobs:
       - name: Validate game archive parts
         env:
           GAME_PARTS: ${{ inputs.game_parts }}
-          GAME_URL: ${{ secrets.Game_URL }}
-          GAME_URL_1: ${{ secrets.Game_URL_1 }}
-          GAME_URL_2: ${{ secrets.Game_URL_2 }}
-          GAME_URL_3: ${{ secrets.Game_URL_3 }}
-          GAME_URL_4: ${{ secrets.Game_URL_4 }}
+          GAME1_URL: ${{ secrets.Game1 }}
+          GAME2_URL: ${{ secrets.Game2 }}
+          GAME3_URL: ${{ secrets.Game3 }}
+          GAME4_URL: ${{ secrets.Game4 }}
+          GAME4_URL: ${{ secrets.Game4 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -69,16 +69,16 @@ jobs:
 
           if [[ "$GAME_PARTS" == "1" ]]; then
             if [[ -z "${GAME_URL:-}" ]]; then
-              echo "::error::Single-part game archive requires the Game_URL secret."
+              echo "::error::Single-part game archive requires the Game1 secret."
               exit 1
             fi
             echo "Verified required game archive secret: Game_URL"
           else
             for part in $(seq 1 "$GAME_PARTS"); do
-              variable="GAME_URL_$part"
+              variable="GAME${part}_URL"
               if [[ -z "${!variable:-}" ]]; then
                 echo "::error::Game archive is set to $GAME_PARTS parts, but required secret $variable is missing or empty."
-                echo "::error::Configure Game_URL_1 through Game_URL_$GAME_PARTS in repository Actions secrets, then rerun."
+                echo "::error::Configure Game1 through Game$GAME_PARTS in repository Actions secrets, then rerun."
                 exit 1
               fi
               echo "Verified required game archive secret: $variable"
@@ -245,13 +245,13 @@ jobs:
         id: cache-key
         env:
           GAME_PARTS: ${{ inputs.game_parts }}
-          GAME_URL: ${{ secrets.Game_URL }}
-          GAME_URL_1: ${{ secrets.Game_URL_1 }}
-          GAME_URL_2: ${{ secrets.Game_URL_2 }}
-          GAME_URL_3: ${{ secrets.Game_URL_3 }}
-          GAME_URL_4: ${{ secrets.Game_URL_4 }}
-          UPDATE_URL: ${{ secrets.Update_URL }}
-          DLC_URL: ${{ secrets.DLC_URL }}
+          GAME1_URL: ${{ secrets.Game1 }}
+          GAME2_URL: ${{ secrets.Game2 }}
+          GAME3_URL: ${{ secrets.Game3 }}
+          GAME4_URL: ${{ secrets.Game4 }}
+          GAME4_URL: ${{ secrets.Game4 }}
+          UPDATE_URL: ${{ secrets.Update }}
+          DLC_URL: ${{ secrets.DLC }}
         shell: bash
         run: |
           set -euo pipefail
@@ -261,20 +261,15 @@ jobs:
           import os
 
           part_count = int(os.environ["GAME_PARTS"])
-          if part_count == 1:
-              game_urls = [os.environ.get("GAME_URL", "").strip()]
-              if not game_urls[0]:
-                  raise SystemExit("Missing required Game_URL secret for single-part game.")
-          else:
-              game_urls = [
-                  os.environ.get(f"GAME_URL_{i}", "").strip()
-                  for i in range(1, part_count + 1)
-              ]
-              if any(not url for url in game_urls):
-                  raise SystemExit(
-                      f"Missing one or more required Game_URL_1 through "
-                      f"Game_URL_{part_count} secrets."
-                  )
+          game_urls = [
+              os.environ.get(f"GAME{i}_URL", "").strip()
+              for i in range(1, part_count + 1)
+          ]
+          if any(not url for url in game_urls):
+              raise SystemExit(
+                  f"Missing one or more required Game{1} through "
+                  f"Game{part_count} secrets."
+              )
 
           urls = game_urls + [
               os.environ.get("UPDATE_URL", "").strip(),
@@ -308,13 +303,13 @@ jobs:
       - name: Download game files and decode keys
         env:
           GAME_PARTS: ${{ inputs.game_parts }}
-          GAME_URL: ${{ secrets.Game_URL }}
-          GAME_URL_1: ${{ secrets.Game_URL_1 }}
-          GAME_URL_2: ${{ secrets.Game_URL_2 }}
-          GAME_URL_3: ${{ secrets.Game_URL_3 }}
-          GAME_URL_4: ${{ secrets.Game_URL_4 }}
-          UPDATE_URL: ${{ secrets.Update_URL }}
-          DLC_URL: ${{ secrets.DLC_URL }}
+          GAME1_URL: ${{ secrets.Game1 }}
+          GAME2_URL: ${{ secrets.Game2 }}
+          GAME3_URL: ${{ secrets.Game3 }}
+          GAME4_URL: ${{ secrets.Game4 }}
+          GAME4_URL: ${{ secrets.Game4 }}
+          UPDATE_URL: ${{ secrets.Update }}
+          DLC_URL: ${{ secrets.DLC }}
           KEYS_BASE64: ${{ secrets.Keys_URL }}
           CONTENT_SELECTION: ${{ inputs.content }}
         shell: bash
@@ -387,10 +382,10 @@ jobs:
 
           echo "Downloading $GAME_PARTS base-game RAR part(s)."
           if [[ "$GAME_PARTS" == "1" ]]; then
-            download_file "$GAME_URL" "$WORK/game.part1.rar"
+            download_file "$GAME1_URL" "$WORK/game.part1.rar"
           else
             for part in $(seq 1 "$GAME_PARTS"); do
-              variable="GAME_URL_$part"
+              variable="GAME${part}_URL"
               url="${!variable}"
               download_file "$url" "$WORK/game.part$part.rar"
             done
