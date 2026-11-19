@@ -799,15 +799,26 @@ jobs:
           ls -lh "$OUTPUT"
 
       # ================================================
-      # UPLOAD IPA
+      # UPLOAD RAW IPA (NO OUTER ZIP)
       # ================================================
 
-      - name: Upload IPA
+      - name: Prepare descriptively named raw IPA artifact
         if: success()
-        uses: actions/upload-artifact@v4
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.device }}" == "iPhone 15 or older (BC fallback)" ]]; then
+            cp "$RUNNER_TEMP/NxNative.ipa" "$RUNNER_TEMP/NxNative-IPA-BC-Fallback.ipa"
+          else
+            cp "$RUNNER_TEMP/NxNative.ipa" "$RUNNER_TEMP/NxNative-IPA-Standard.ipa"
+          fi
+
+      - name: Upload raw IPA
+        if: success()
+        uses: actions/upload-artifact@v7
         with:
-          name: NxNative-IPA-${{ inputs.device == 'iPhone 15 or older (BC fallback)' && 'BC-Fallback' || 'Standard' }}
-          path: ${{ runner.temp }}/NxNative.ipa
+          path: ${{ runner.temp }}/NxNative-IPA-${{ inputs.device == 'iPhone 15 or older (BC fallback)' && 'BC-Fallback' || 'Standard' }}.ipa
+          archive: false
           if-no-files-found: error
           retention-days: 7
 
