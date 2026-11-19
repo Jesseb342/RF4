@@ -111,15 +111,16 @@ jobs:
           echo "Extracting multipart RAR archive..."
           unar -o "$EXTRACT" "$FIRST"
 
-          mapfile -t NUPS < <(find "$EXTRACT" -type f -iname '*.nup' -print)
-          if [[ "${#NUPS[@]}" -ne 1 ]]; then
-            echo "::error::Expected exactly one .nup file; found ${#NUPS[@]}."
+          NUP_COUNT="$(find "$EXTRACT" -type f -iname '*.nup' | wc -l | tr -d ' ')"
+          if [[ "$NUP_COUNT" != "1" ]]; then
+            echo "::error::Expected exactly one .nup file; found $NUP_COUNT."
             find "$EXTRACT" -maxdepth 3 -type f -print
             exit 1
           fi
 
+          SOURCE_NUP="$(find "$EXTRACT" -type f -iname '*.nup' -print -quit)"
           NUP="$GAME_DIR/OcarinaOfTime.nup"
-          mv "${NUPS[0]}" "$NUP"
+          mv "$SOURCE_NUP" "$NUP"
           test -s "$NUP"
 
           echo "NUP extracted successfully:"
@@ -203,6 +204,7 @@ jobs:
 
           python - "$NUP" <<'PY'
           import sys
+          sys.path.insert(0, "scripts")
           import pack_nup
           path = sys.argv[1]
           if not pack_nup.is_nup(path):
