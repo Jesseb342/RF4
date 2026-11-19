@@ -59,6 +59,27 @@ jobs:
           brew install unar
           command -v unar
 
+      - name: Reclaim runner disk space before the large download
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Disk space before pre-download cleanup:"
+          df -h "$RUNNER_TEMP"
+
+          # Keep the selected Xcode installation and iOS SDK; remove only
+          # disposable simulator data, build products and package caches.
+          xcrun simctl shutdown all || true
+          xcrun simctl delete all || true
+          xcrun simctl runtime delete all || true
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"
+          rm -rf "$HOME/Library/Developer/CoreSimulator/Caches"
+          rm -rf "$HOME/Library/Caches/org.swift.swiftpm"
+          rm -rf "$HOME/Library/Caches/Homebrew"
+          brew cleanup -s || true
+
+          echo "Disk space after pre-download cleanup:"
+          df -h "$RUNNER_TEMP"
+
       - name: Download OOT archive parts
         env:
           GAME_PARTS: ${{ inputs.game_parts }}
