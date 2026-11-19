@@ -87,128 +87,7 @@ jobs:
           echo "All $GAME_PARTS required game archive part secret(s) are present."
 
       # ================================================
-      # SELECT AND VERIFY THE REQUIRED METALFX SDK
-      # ================================================
-
-      - name: Select and verify Xcode 27 MetalFX SDK
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Installed Xcode applications:"
-          ls -d /Applications/Xcode*.app
-
-          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-
-          xcodebuild -version
-
-          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
-          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
-
-          echo "iOS SDK: $SDK_VERSION"
-          echo "SDK path: $SDK_PATH"
-
-          if [[ "$SDK_VERSION" != 27.* ]]; then
-            echo "::error::Expected iOS 27 SDK, found $SDK_VERSION."
-            exit 1
-          fi
-
-          METALFX_HEADERS="$SDK_PATH/System/Library/Frameworks/MetalFX.framework/Headers"
-
-          if [[ ! -d "$METALFX_HEADERS" ]]; then
-            echo "::error::MetalFX headers not found: $METALFX_HEADERS"
-            exit 1
-          fi
-
-          for symbol in reactiveMaskTextureUsage colorContentOffsetX; do
-            if ! grep -R -q "$symbol" "$METALFX_HEADERS"; then
-              echo "::error::Required MetalFX API '$symbol' is missing from the selected SDK."
-              exit 1
-            fi
-            echo "Verified MetalFX API: $symbol"
-          done
-
-      # ================================================
-      # CHECKOUT LATEST NXNATIVE SOURCES
-      # ================================================
-
-      - name: Checkout BC fallback version
-        if: inputs.device == 'iPhone 15 or older (BC fallback)'
-        uses: actions/checkout@v4
-        with:
-          repository: mianmuhammadse/nxnative
-          ref: no-bc
-          fetch-depth: 0
-
-      - name: Checkout latest standard NxNative
-        if: inputs.device == 'iPhone 15 Pro/Pro Max or newer (standard)'
-        uses: actions/checkout@v4
-        with:
-          repository: seedds/nxnative
-          ref: main
-          fetch-depth: 0
-
-      # ================================================
-      # UPDATE BC FALLBACK WITH LATEST UPSTREAM
-      # ================================================
-
-      - name: Update BC fallback with latest upstream NxNative
-        if: inputs.device == 'iPhone 15 or older (BC fallback)'
-        id: source-version
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "BC fallback branch before upstream sync:"
-          git log -1 --format='%H %s'
-
-          git remote add upstream https://github.com/seedds/nxnative.git
-          git fetch --no-tags upstream main:refs/remotes/upstream/main
-
-          UPSTREAM_SHA="$(git rev-parse upstream/main)"
-          BC_SHA="$(git rev-parse HEAD)"
-
-          echo "Latest upstream NxNative: $UPSTREAM_SHA"
-          echo "BC fallback branch tip: $BC_SHA"
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          if ! git merge --no-edit --no-ff "$UPSTREAM_SHA"; then
-            echo "Upstream merge reported conflicts; checking whether they are limited to the known game README."
-
-            CONFLICT_FILE="dm/games/01007EF00011E000/README.md"
-            CONFLICTS="$(git diff --name-only --diff-filter=U)"
-
-            if [[ "$CONFLICTS" != "$CONFLICT_FILE" ]]; then
-              echo "::error::Upstream merge has unexpected conflicts:"
-              printf '%s\n' "$CONFLICTS"
-              echo "::error::Only $CONFLICT_FILE may be resolved automatically. No source-code conflicts will be discarded."
-              exit 1
-            fi
-
-            echo "The only conflict is $CONFLICT_FILE."
-            echo "Keeping the BC fallback branch's README so its device-specific notes are preserved."
-            git checkout --ours -- "$CONFLICT_FILE"
-            git add "$CONFLICT_FILE"
-
-            GIT_EDITOR=true git merge --continue
-
-            echo "Resolved the documentation-only conflict; all upstream source changes remain in the merge."
-          fi
-
-          MERGED_SHA="$(git rev-parse HEAD)"
-          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
-          echo "bc_branch_sha=$BC_SHA" >> "$GITHUB_OUTPUT"
-          echo "build_sha=$MERGED_SHA" >> "$GITHUB_OUTPUT"
-
-          echo "Merged build source:"
-          git log -1 --format='%H %s'
-          echo "Merge parents:"
-          git rev-list --parents -n 1 HEAD
-
-      # ================================================
-      # ENVIRONMENT
+      # PREPARE PYTHON AND RAR EXTRACTION TOOL
       # ================================================
 
       - name: Set up Python
@@ -216,82 +95,12 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Set up .NET SDK
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "10.0.x"
-
-      - name: Install dependencies
+      - name: Install RAR extraction tool
         shell: bash
         run: |
           set -euo pipefail
-
-          brew install xcodegen zstd spirv-cross unar glslang
-
-          command -v glslangValidator
-          glslangValidator --version
-
-          python -m pip install --upgrade pip
-
-          python -m pip install \
-            lz4 "capstone>=5,<6" fonttools zbic backports.zstd
-
-      # ================================================
-      # DOWNLOAD CACHE KEY
-      # ================================================
-
-      - name: Prepare download cache
-        id: cache-key
-        env:
-          GAME_PARTS: ${{ inputs.game_parts }}
-          GAME1_URL: ${{ secrets.Game1 }}
-          GAME2_URL: ${{ secrets.Game2 }}
-          GAME3_URL: ${{ secrets.Game3 }}
-          GAME4_URL: ${{ secrets.Game4 }}
-          UPDATE_URL: ${{ secrets.Update }}
-          DLC_URL: ${{ secrets.DLC }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          python - <<'PY'
-          import hashlib
-          import os
-
-          part_count = int(os.environ["GAME_PARTS"])
-          game_urls = [
-              os.environ.get(f"GAME{i}_URL", "").strip()
-              for i in range(1, part_count + 1)
-          ]
-          if any(not url for url in game_urls):
-              raise SystemExit(
-                  f"Missing one or more required Game1 through "
-                  f"Game{part_count} secrets."
-              )
-
-          urls = game_urls + [
-              os.environ.get("UPDATE_URL", "").strip(),
-              os.environ.get("DLC_URL", "").strip(),
-          ]
-
-          cache_key = hashlib.sha256(
-              "|".join(urls).encode()
-          ).hexdigest()
-
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"key=nxnative-downloads-{cache_key}\n")
-
-          print("Download cache key prepared.")
-          PY
-
-          mkdir -p "$RUNNER_TEMP/nxnative/download-cache"
-
-      - name: Restore downloaded game files
-        id: download-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: ${{ runner.temp }}/nxnative/download-cache
-          key: ${{ runner.os }}-${{ steps.cache-key.outputs.key }}
+          brew install unar
+          command -v unar
 
       # ================================================
       # DOWNLOAD GAME / UPDATE / DLC
@@ -314,21 +123,15 @@ jobs:
           set -euo pipefail
 
           WORK="$RUNNER_TEMP/nxnative"
-          CACHE="$WORK/download-cache"
-
-          mkdir -p "$WORK" "$CACHE"
+          mkdir -p "$WORK"
 
           download_file() {
             local url="$1"
             local output="$2"
             local filename
-            local cached
             local temporary
-            local size_bytes
-            local cache_limit=536870912
 
             filename="$(basename "$output")"
-            cached="$CACHE/$filename"
             temporary="$output.part"
 
             if [[ -z "${url:-}" ]]; then
@@ -336,31 +139,8 @@ jobs:
               exit 1
             fi
 
-            # Large files are downloaded directly to the work directory.
-            # Never duplicate multipart game archives in the Actions cache.
-            if [[ "$filename" == game.part*.rar ]]; then
-              rm -f "$cached"
-            elif [[ -s "$cached" ]]; then
-              local cached_size
-              cached_size="$(wc -c < "$cached" | tr -d ' ')"
-
-              if (( cached_size <= cache_limit )); then
-                echo "========================================"
-                echo "CACHE HIT: $filename"
-                echo "Reusing cached download."
-                echo "========================================"
-
-                cp "$cached" "$output"
-                file "$output"
-                return
-              fi
-
-              echo "Removing oversized cached file: $filename ($cached_size bytes)."
-              rm -f "$cached"
-            fi
-
             echo "========================================"
-            echo "CACHE MISS: $filename"
+            echo "Downloading $filename"
             echo "Starting direct download..."
             echo "========================================"
 
@@ -386,14 +166,8 @@ jobs:
             ls -lh "$output"
             file "$output"
 
-            size_bytes="$(wc -c < "$output" | tr -d ' ')"
+            echo "Download completed."
 
-            if [[ "$filename" != game.part*.rar ]] && (( size_bytes <= cache_limit )); then
-              cp "$output" "$cached"
-              echo "Saved $filename to download cache."
-            else
-              echo "Skipping download cache for large file: $filename ($size_bytes bytes)."
-            fi
           }
 
           echo "Downloading $GAME_PARTS base-game RAR part(s)."
@@ -493,17 +267,6 @@ jobs:
           test -s "$WORK/prod.keys"
 
           echo "All downloads and key preparation completed."
-
-      # ================================================
-      # SAVE DOWNLOAD CACHE
-      # ================================================
-
-      - name: Save downloaded game files
-        if: success() && steps.download-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ${{ runner.temp }}/nxnative/download-cache
-          key: ${{ runner.os }}-${{ steps.cache-key.outputs.key }}
 
       # ================================================
       # EXTRACT RAR / VALIDATE PACKAGES
@@ -665,7 +428,6 @@ jobs:
               else:
                   source.unlink(missing_ok=True)
 
-              (work / "download-cache" / source.name).unlink(missing_ok=True)
 
           if (work / "game.part1.rar").exists():
               process_download("game", work / "game.part1.rar")
@@ -692,6 +454,152 @@ jobs:
 
           test -s "$WORK/prod.keys"
 
+
+      # ================================================
+      # SELECT AND VERIFY THE REQUIRED METALFX SDK
+      # ================================================
+
+      - name: Select and verify Xcode 27 MetalFX SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Installed Xcode applications:"
+          ls -d /Applications/Xcode*.app
+
+          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+
+          xcodebuild -version
+
+          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+
+          echo "iOS SDK: $SDK_VERSION"
+          echo "SDK path: $SDK_PATH"
+
+          if [[ "$SDK_VERSION" != 27.* ]]; then
+            echo "::error::Expected iOS 27 SDK, found $SDK_VERSION."
+            exit 1
+          fi
+
+          METALFX_HEADERS="$SDK_PATH/System/Library/Frameworks/MetalFX.framework/Headers"
+
+          if [[ ! -d "$METALFX_HEADERS" ]]; then
+            echo "::error::MetalFX headers not found: $METALFX_HEADERS"
+            exit 1
+          fi
+
+          for symbol in reactiveMaskTextureUsage colorContentOffsetX; do
+            if ! grep -R -q "$symbol" "$METALFX_HEADERS"; then
+              echo "::error::Required MetalFX API '$symbol' is missing from the selected SDK."
+              exit 1
+            fi
+            echo "Verified MetalFX API: $symbol"
+          done
+
+      # ================================================
+      # CHECKOUT LATEST NXNATIVE SOURCES
+      # ================================================
+
+      - name: Checkout BC fallback version
+        if: inputs.device == 'iPhone 15 or older (BC fallback)'
+        uses: actions/checkout@v4
+        with:
+          repository: mianmuhammadse/nxnative
+          ref: no-bc
+          fetch-depth: 0
+
+      - name: Checkout latest standard NxNative
+        if: inputs.device == 'iPhone 15 Pro/Pro Max or newer (standard)'
+        uses: actions/checkout@v4
+        with:
+          repository: seedds/nxnative
+          ref: main
+          fetch-depth: 0
+
+      # ================================================
+      # UPDATE BC FALLBACK WITH LATEST UPSTREAM
+      # ================================================
+
+      - name: Update BC fallback with latest upstream NxNative
+        if: inputs.device == 'iPhone 15 or older (BC fallback)'
+        id: source-version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "BC fallback branch before upstream sync:"
+          git log -1 --format='%H %s'
+
+          git remote add upstream https://github.com/seedds/nxnative.git
+          git fetch --no-tags upstream main:refs/remotes/upstream/main
+
+          UPSTREAM_SHA="$(git rev-parse upstream/main)"
+          BC_SHA="$(git rev-parse HEAD)"
+
+          echo "Latest upstream NxNative: $UPSTREAM_SHA"
+          echo "BC fallback branch tip: $BC_SHA"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git merge --no-edit --no-ff "$UPSTREAM_SHA"; then
+            echo "Upstream merge reported conflicts; checking whether they are limited to the known game README."
+
+            CONFLICT_FILE="dm/games/01007EF00011E000/README.md"
+            CONFLICTS="$(git diff --name-only --diff-filter=U)"
+
+            if [[ "$CONFLICTS" != "$CONFLICT_FILE" ]]; then
+              echo "::error::Upstream merge has unexpected conflicts:"
+              printf '%s\n' "$CONFLICTS"
+              echo "::error::Only $CONFLICT_FILE may be resolved automatically. No source-code conflicts will be discarded."
+              exit 1
+            fi
+
+            echo "The only conflict is $CONFLICT_FILE."
+            echo "Keeping the BC fallback branch's README so its device-specific notes are preserved."
+            git checkout --ours -- "$CONFLICT_FILE"
+            git add "$CONFLICT_FILE"
+
+            GIT_EDITOR=true git merge --continue
+
+            echo "Resolved the documentation-only conflict; all upstream source changes remain in the merge."
+          fi
+
+          MERGED_SHA="$(git rev-parse HEAD)"
+          echo "upstream_sha=$UPSTREAM_SHA" >> "$GITHUB_OUTPUT"
+          echo "bc_branch_sha=$BC_SHA" >> "$GITHUB_OUTPUT"
+          echo "build_sha=$MERGED_SHA" >> "$GITHUB_OUTPUT"
+
+          echo "Merged build source:"
+          git log -1 --format='%H %s'
+          echo "Merge parents:"
+          git rev-list --parents -n 1 HEAD
+
+      # ================================================
+      # ENVIRONMENT
+      # ================================================
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          brew install xcodegen zstd spirv-cross glslang
+
+          command -v glslangValidator
+          glslangValidator --version
+
+          python -m pip install --upgrade pip
+
+          python -m pip install \
+            lz4 "capstone>=5,<6" fonttools zbic backports.zstd
+
       # ================================================
       # RECLAIM RUNNER DISK SPACE
       # ================================================
@@ -716,10 +624,9 @@ jobs:
           rm -rf "$HOME/Library/Caches/Homebrew"
           brew cleanup -s || true
 
-          echo "Removing duplicate source downloads and download cache..."
+          echo "Removing duplicate source downloads..."
           WORK="$RUNNER_TEMP/nxnative"
           rm -rf \
-            "$WORK/download-cache" \
             "$WORK/extracted-game" \
             "$WORK/extracted-update" \
             "$WORK/extracted-dlc" \
@@ -960,12 +867,6 @@ jobs:
             brew list --versions 2>/dev/null | grep -E \
               'xcodegen|zstd|spirv-cross|unar|glslang' || true
 
-            echo ""
-
-            echo "CACHE INFORMATION"
-            echo "-----------------"
-            echo "Cache key: ${{ steps.cache-key.outputs.key }}"
-            echo "Cache hit: ${{ steps.download-cache.outputs.cache-hit }}"
             echo ""
 
             echo "DOWNLOADED FILES"
