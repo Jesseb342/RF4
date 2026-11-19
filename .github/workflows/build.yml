@@ -341,14 +341,22 @@ jobs:
             if [[ "$filename" == game.part*.rar ]]; then
               rm -f "$cached"
             elif [[ -s "$cached" ]]; then
-              echo "========================================"
-              echo "CACHE HIT: $filename"
-              echo "Reusing cached download."
-              echo "========================================"
+              local cached_size
+              cached_size="$(wc -c < "$cached" | tr -d ' ')"
 
-              cp "$cached" "$output"
-              file "$output"
-              return
+              if (( cached_size <= cache_limit )); then
+                echo "========================================"
+                echo "CACHE HIT: $filename"
+                echo "Reusing cached download."
+                echo "========================================"
+
+                cp "$cached" "$output"
+                file "$output"
+                return
+              fi
+
+              echo "Removing oversized cached file: $filename ($cached_size bytes)."
+              rm -f "$cached"
             fi
 
             echo "========================================"
