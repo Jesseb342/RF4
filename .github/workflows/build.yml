@@ -54,7 +54,6 @@ jobs:
           GAME2_URL: ${{ secrets.Game2 }}
           GAME3_URL: ${{ secrets.Game3 }}
           GAME4_URL: ${{ secrets.Game4 }}
-          GAME4_URL: ${{ secrets.Game4 }}
         shell: bash
         run: |
           set -euo pipefail
@@ -68,11 +67,11 @@ jobs:
           esac
 
           if [[ "$GAME_PARTS" == "1" ]]; then
-            if [[ -z "${GAME_URL:-}" ]]; then
+            if [[ -z "${GAME1_URL:-}" ]]; then
               echo "::error::Single-part game archive requires the Game1 secret."
               exit 1
             fi
-            echo "Verified required game archive secret: Game_URL"
+            echo "Verified required game archive secret: Game1"
           else
             for part in $(seq 1 "$GAME_PARTS"); do
               variable="GAME${part}_URL"
@@ -249,7 +248,6 @@ jobs:
           GAME2_URL: ${{ secrets.Game2 }}
           GAME3_URL: ${{ secrets.Game3 }}
           GAME4_URL: ${{ secrets.Game4 }}
-          GAME4_URL: ${{ secrets.Game4 }}
           UPDATE_URL: ${{ secrets.Update }}
           DLC_URL: ${{ secrets.DLC }}
         shell: bash
@@ -267,7 +265,7 @@ jobs:
           ]
           if any(not url for url in game_urls):
               raise SystemExit(
-                  f"Missing one or more required Game{1} through "
+                  f"Missing one or more required Game1 through "
                   f"Game{part_count} secrets."
               )
 
@@ -306,7 +304,6 @@ jobs:
           GAME1_URL: ${{ secrets.Game1 }}
           GAME2_URL: ${{ secrets.Game2 }}
           GAME3_URL: ${{ secrets.Game3 }}
-          GAME4_URL: ${{ secrets.Game4 }}
           GAME4_URL: ${{ secrets.Game4 }}
           UPDATE_URL: ${{ secrets.Update }}
           DLC_URL: ${{ secrets.DLC }}
