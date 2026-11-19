@@ -324,6 +324,8 @@ jobs:
             local filename
             local cached
             local temporary
+            local size_bytes
+            local cache_limit=536870912
 
             filename="$(basename "$output")"
             cached="$CACHE/$filename"
@@ -334,7 +336,11 @@ jobs:
               exit 1
             fi
 
-            if [[ -s "$cached" ]]; then
+            # Large files are downloaded directly to the work directory.
+            # Never duplicate multipart game archives in the Actions cache.
+            if [[ "$filename" == game.part*.rar ]]; then
+              rm -f "$cached"
+            elif [[ -s "$cached" ]]; then
               echo "========================================"
               echo "CACHE HIT: $filename"
               echo "Reusing cached download."
@@ -372,9 +378,14 @@ jobs:
             ls -lh "$output"
             file "$output"
 
-            cp "$output" "$cached"
+            size_bytes="$(wc -c < "$output" | tr -d ' ')"
 
-            echo "Saved $filename to download cache."
+            if [[ "$filename" != game.part*.rar ]] && (( size_bytes <= cache_limit )); then
+              cp "$output" "$cached"
+              echo "Saved $filename to download cache."
+            else
+              echo "Skipping download cache for large file: $filename ($size_bytes bytes)."
+            fi
           }
 
           echo "Downloading $GAME_PARTS base-game RAR part(s)."
@@ -637,6 +648,16 @@ jobs:
                       f"Added direct package: {target.name} "
                       f"({target.stat().st_size:,} bytes)"
                   )
+
+              # Once the package has been moved into GameFiles, remove its
+              # source archive and any small cached duplicate immediately.
+              if source_override:
+                  for archive in work.glob("game.part*.rar"):
+                      archive.unlink(missing_ok=True)
+              else:
+                  source.unlink(missing_ok=True)
+
+              (work / "download-cache" / source.name).unlink(missing_ok=True)
 
           if (work / "game.part1.rar").exists():
               process_download("game", work / "game.part1.rar")
