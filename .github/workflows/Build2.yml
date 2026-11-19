@@ -1,0 +1,350 @@
+name: Build2 - Ocarina of Time iPhone 14 Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      game_parts:
+        description: "Number of RAR archive parts containing the OOT NUP"
+        required: true
+        type: choice
+        default: "1"
+        options:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+
+permissions:
+  contents: read
+
+jobs:
+  build-oot:
+    name: OOT NUP / iPhone 14 BC fallback
+    runs-on: xcode-27
+    timeout-minutes: 360
+
+    steps:
+      # Download and extract the game before installing build dependencies,
+      # matching the space-conscious order in the primary workflow.
+
+      - name: Validate archive part secrets
+        env:
+          GAME_PARTS: ${{ inputs.game_parts }}
+          GAME1_URL: ${{ secrets.Game1 }}
+          GAME2_URL: ${{ secrets.Game2 }}
+          GAME3_URL: ${{ secrets.Game3 }}
+          GAME4_URL: ${{ secrets.Game4 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$GAME_PARTS" in 1|2|3|4) ;; *) echo "::error::Invalid archive part count"; exit 1 ;; esac
+          for part in $(seq 1 "$GAME_PARTS"); do
+            variable="GAME${part}_URL"
+            if [[ -z "${!variable:-}" ]]; then
+              echo "::error::Missing repository secret: Game$part"
+              exit 1
+            fi
+            echo "Verified Game$part"
+          done
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install RAR extraction tool
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install unar
+          command -v unar
+
+      - name: Download OOT archive parts
+        env:
+          GAME_PARTS: ${{ inputs.game_parts }}
+          GAME1_URL: ${{ secrets.Game1 }}
+          GAME2_URL: ${{ secrets.Game2 }}
+          GAME3_URL: ${{ secrets.Game3 }}
+          GAME4_URL: ${{ secrets.Game4 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/nxnative"
+          mkdir -p "$WORK"
+
+          download_file() {
+            local url="$1"
+            local output="$2"
+            if [[ -z "${url:-}" ]]; then
+              echo "::error::Download URL is empty."
+              exit 1
+            fi
+            echo "Downloading $(basename "$output")"
+            curl --fail --location --show-error --progress-bar \
+              --retry 3 --retry-delay 5 --connect-timeout 30 \
+              --output "$output.part" "$url"
+            test -s "$output.part"
+            mv "$output.part" "$output"
+            ls -lh "$output"
+          }
+
+          for part in $(seq 1 "$GAME_PARTS"); do
+            variable="GAME${part}_URL"
+            download_file "${!variable}" "$WORK/game.part$part.rar"
+          done
+
+          echo "Archive download complete."
+          df -h "$RUNNER_TEMP"
+
+      - name: Extract the NUP and immediately remove RAR files
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/nxnative"
+          GAME_DIR="$RUNNER_TEMP/GameFiles"
+          EXTRACT="$WORK/oot-extracted"
+          mkdir -p "$GAME_DIR" "$EXTRACT"
+
+          FIRST="$WORK/game.part1.rar"
+          test -s "$FIRST"
+
+          echo "Extracting multipart RAR archive..."
+          unar -o "$EXTRACT" "$FIRST"
+
+          mapfile -t NUPS < <(find "$EXTRACT" -type f -iname '*.nup' -print)
+          if [[ "${#NUPS[@]}" -ne 1 ]]; then
+            echo "::error::Expected exactly one .nup file; found ${#NUPS[@]}."
+            find "$EXTRACT" -maxdepth 3 -type f -print
+            exit 1
+          fi
+
+          NUP="$GAME_DIR/OcarinaOfTime.nup"
+          mv "${NUPS[0]}" "$NUP"
+          test -s "$NUP"
+
+          echo "NUP extracted successfully:"
+          ls -lh "$NUP"
+          du -h "$NUP"
+
+          # Remove every downloaded archive volume and extraction duplicate now.
+          rm -f "$WORK"/game.part*.rar "$WORK"/game.part*.rar.part
+          rm -rf "$EXTRACT"
+
+          echo "RAR volumes and duplicate extraction data removed."
+          df -h "$RUNNER_TEMP"
+
+      - name: Select and verify Xcode 27 MetalFX SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+          xcodebuild -version
+          SDK_PATH="$(xcrun --sdk iphoneos --show-sdk-path)"
+          SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          echo "iOS SDK: $SDK_VERSION"
+          if [[ "$SDK_VERSION" != 27.* ]]; then
+            echo "::error::Expected iOS 27 SDK, found $SDK_VERSION."
+            exit 1
+          fi
+          METALFX_HEADERS="$SDK_PATH/System/Library/Frameworks/MetalFX.framework/Headers"
+          test -d "$METALFX_HEADERS"
+          for symbol in reactiveMaskTextureUsage colorContentOffsetX; do
+            grep -R -q "$symbol" "$METALFX_HEADERS" || {
+              echo "::error::Required MetalFX API '$symbol' is missing."
+              exit 1
+            }
+            echo "Verified MetalFX API: $symbol"
+          done
+
+      # Keep the same older-device BC texture fallback as the working workflow.
+      - name: Checkout BC fallback NxNative
+        uses: actions/checkout@v4
+        with:
+          repository: mianmuhammadse/nxnative
+          ref: no-bc
+          fetch-depth: 0
+
+      - name: Merge latest upstream NxNative
+        id: source-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/seedds/nxnative.git
+          git fetch --no-tags upstream main:refs/remotes/upstream/main
+          UPSTREAM_SHA="$(git rev-parse upstream/main)"
+          BC_SHA="$(git rev-parse HEAD)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if ! git merge --no-edit --no-ff "$UPSTREAM_SHA"; then
+            CONFLICT_FILE="dm/games/01007EF00011E000/README.md"
+            CONFLICTS="$(git diff --name-only --diff-filter=U)"
+            if [[ "$CONFLICTS" != "$CONFLICT_FILE" ]]; then
+              echo "::error::Unexpected upstream merge conflict(s):"
+              printf '%s\n' "$CONFLICTS"
+              exit 1
+            fi
+            git checkout --ours -- "$CONFLICT_FILE"
+            git add "$CONFLICT_FILE"
+            GIT_EDITOR=true git merge --continue
+          fi
+
+          echo "BC fallback base: $BC_SHA"
+          echo "Upstream: $UPSTREAM_SHA"
+          echo "Merged source: $(git rev-parse HEAD)"
+
+      - name: Verify OOT NUP and apply iPhone 14 test profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          NUP="$RUNNER_TEMP/GameFiles/OcarinaOfTime.nup"
+          test -s "$NUP"
+
+          python - "$NUP" <<'PY'
+          import sys
+          import pack_nup
+          path = sys.argv[1]
+          if not pack_nup.is_nup(path):
+              raise SystemExit("Downloaded file is not a valid NxNative NUP container.")
+          print("Verified NUP container:", path)
+          PY
+
+          PROFILE="dm/games/0400486024DEC000/game.tsv"
+          test -s "$PROFILE" || {
+            echo "::error::The OOT profile is missing from the checked-out NxNative source."
+            exit 1
+          }
+
+          # The OOT profile's matched frame-step patch uses this target to keep
+          # game time synchronized when the host cannot sustain a frame.
+          # Use an adaptive GPU-load-based resolution rather than a hard-coded
+          # 65% scale, which is not validated for the A15.
+          python - "$PROFILE" <<'PY'
+          import sys
+          from pathlib import Path
+          p = Path(sys.argv[1])
+          lines = p.read_text().splitlines()
+          out = []
+          seen = False
+          for line in lines:
+              if line.startswith("fps_target\t"):
+                  out.append("fps_target\t30")
+                  seen = True
+              elif line.startswith("mem_reserve\t"):
+                  # Conservative virtual reservation values used by an
+                  # alternate OOT profile; not a guarantee of fitting in RAM.
+                  out.append("mem_reserve\t0x300000000")
+              elif line.startswith("mem_alias\t"):
+                  out.append("mem_alias\t0x98000000")
+              else:
+                  out.append(line)
+          if not seen:
+              raise SystemExit("OOT profile has no fps_target entry to override.")
+          p.write_text("\n".join(out) + "\n")
+          print("Applied OOT test profile: 30 FPS target and reduced virtual reservation/alias.")
+          PY
+
+          mkdir -p "$RUNNER_TEMP/nxnative"
+          cat > "$RUNNER_TEMP/nxnative/oot-iphone14.env" <<'EOF'
+          DM_DYNAMIC_RESOLUTION=1
+          EOF
+          echo "Adaptive dynamic resolution enabled in the app environment."
+          echo "Frame generation remains disabled: no iPhone 14/A15-compatible implementation has been verified in this BC fallback source."
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen zstd spirv-cross glslang
+          command -v glslangValidator
+          glslangValidator --version
+          python -m pip install --upgrade pip
+          python -m pip install lz4 "capstone>=5,<6" fonttools zbic backports.zstd
+
+      - name: Aggressively reclaim runner disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Disk space before cleanup:"
+          df -h "$RUNNER_TEMP"
+
+          xcrun simctl shutdown all || true
+          xcrun simctl delete all || true
+          xcrun simctl runtime delete all || true
+
+          rm -rf "$HOME/Library/Developer/Xcode/DerivedData"
+          rm -rf "$HOME/Library/Developer/CoreSimulator/Caches"
+          rm -rf "$HOME/Library/Caches/org.swift.swiftpm"
+          rm -rf "$HOME/Library/Caches/Homebrew"
+          brew cleanup -s || true
+
+          # RAR parts and duplicate extraction data were already removed.
+          echo "Retained NUP:"
+          ls -lh "$RUNNER_TEMP/GameFiles/OcarinaOfTime.nup"
+
+          echo "Disk space after cleanup:"
+          df -h "$RUNNER_TEMP"
+          AVAILABLE_KB="$(df -Pk "$RUNNER_TEMP" | awk 'NR==2 {print $4}')"
+          if [[ "$AVAILABLE_KB" -lt 15000000 ]]; then
+            echo "::error::Less than 15 GB free after cleanup; refusing to begin the large OOT build."
+            exit 1
+          fi
+
+      - name: Refresh shader tool lock for this runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          python dm/gfx/tools/tool_lock.py --update-lock
+          python dm/gfx/tools/dmsh_chain.py --header
+
+      - name: Build unsigned OOT IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$RUNNER_TEMP/nxnative"
+          NUP="$RUNNER_TEMP/GameFiles/OcarinaOfTime.nup"
+          OUTPUT="$RUNNER_TEMP/NxNative-OOT-iPhone14.ipa"
+          LOG="$RUNNER_TEMP/oot-build.log"
+
+          echo "Building OOT directly from its NUP; no prod.keys, separate update, or DLC is required."
+          echo "NUP size:"
+          ls -lh "$NUP"
+          echo "Free space before build:"
+          df -h "$RUNNER_TEMP"
+
+          set -o pipefail
+          python scripts/build_ipa_from_nsp.py \
+            "$NUP" \
+            --work-dir "$WORK/oot-build" \
+            --env-file "$WORK/oot-iphone14.env" \
+            --no-keep-extracted \
+            -o "$OUTPUT" 2>&1 | tee "$LOG"
+
+          test -s "$OUTPUT"
+          echo "IPA successfully created:"
+          ls -lh "$OUTPUT"
+          shasum -a 256 "$OUTPUT"
+
+      - name: Upload OOT IPA
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NxNative-OOT-iPhone14-Test
+          path: ${{ runner.temp }}/NxNative-OOT-iPhone14.ipa
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload OOT build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OOT-iPhone14-Build-Diagnostics
+          path: ${{ runner.temp }}/oot-build.log
+          if-no-files-found: ignore
+          retention-days: 7
