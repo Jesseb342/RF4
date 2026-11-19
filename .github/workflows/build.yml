@@ -166,8 +166,6 @@ jobs:
             ls -lh "$output"
             file "$output"
 
-            echo "Download completed."
-
           }
 
           echo "Downloading $GAME_PARTS base-game RAR part(s)."
@@ -421,7 +419,7 @@ jobs:
                   )
 
               # Once the package has been moved into GameFiles, remove its
-              # source archive and any small cached duplicate immediately.
+              # source archive immediately to reclaim disk space.
               if source_override:
                   for archive in work.glob("game.part*.rar"):
                       archive.unlink(missing_ok=True)
