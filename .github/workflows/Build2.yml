@@ -354,12 +354,19 @@ jobs:
           ls -lh "$OUTPUT"
           shasum -a 256 "$OUTPUT"
 
-      - name: Upload OOT IPA
+      - name: Prepare descriptively named raw OOT IPA artifact
         if: success()
-        uses: actions/upload-artifact@v4
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/NxNative-OOT-iPhone14.ipa" "$RUNNER_TEMP/NxNative-OOT-iPhone14-Test.ipa"
+
+      - name: Upload raw OOT IPA
+        if: success()
+        uses: actions/upload-artifact@v7
         with:
-          name: NxNative-OOT-iPhone14-Test
-          path: ${{ runner.temp }}/NxNative-OOT-iPhone14.ipa
+          path: ${{ runner.temp }}/NxNative-OOT-iPhone14-Test.ipa
+          archive: false
           if-no-files-found: error
           retention-days: 7
 
