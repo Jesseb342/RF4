@@ -1,6 +1,6 @@
 name: Build2 - Ocarina of Time iPhone 14 Test
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       game_parts:
