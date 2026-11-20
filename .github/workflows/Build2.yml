@@ -336,14 +336,20 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("scripts/build_ipa_from_nsp.py")
           source = path.read_text()
-          old = '''        if diff:
-              rows = '\\n'.join(table_difference(n, g.table(n).read_bytes(), (tmp / "tables" / n).read_bytes()) for n in diff)
-              raise BuildError(f'the split shader tables differ from game profile {g.id}\\'s:\\n{rows}\\nEither these game files are not the versions the profile registers, or shader_split.py now reads them differently and the profile\\'s tables were not split again (the split\\'s tables: {tmp / "tables"})')
-  '''
-          new = '''        if diff:
+          pattern = re.compile(
+              r"(?m)^        if diff:\n"
+              r"            rows = .*\n"
+              r"            raise BuildError\(f'the split shader tables differ.*\n"
+          )
+          match = pattern.search(source)
+          if not match or len(pattern.findall(source)) != 1:
+              raise SystemExit("Expected shader-table validation block was not found exactly once; refusing to patch.")
+
+          replacement = """        if diff:
               if os.environ.get("DM_REFRESH_OOT_SHADER_TABLES") == "1" and g.id == "0400486024DEC000":
                   for name in names:
                       shutil.copyfile(tmp / "tables" / name, g.table(name))
@@ -351,10 +357,8 @@ jobs:
               else:
                   rows = '\\n'.join(table_difference(n, g.table(n).read_bytes(), (tmp / "tables" / n).read_bytes()) for n in diff)
                   raise BuildError(f'the split shader tables differ from game profile {g.id}\\'s:\\n{rows}\\nEither these game files are not the versions the profile registers, or shader_split.py now reads them differently and the profile\\'s tables were not split again (the split\\'s tables: {tmp / "tables"})')
-  '''
-          if source.count(old) != 1:
-              raise SystemExit("Expected shader-table validation block was not found exactly once; refusing to patch.")
-          path.write_text(source.replace(old, new))
+"""
+          path.write_text(source[:match.start()] + replacement + source[match.end():])
           print("Installed guarded OOT-only shader-table refresh.")
           PY
           grep -n "OOT-only shader table refresh" scripts/build_ipa_from_nsp.py
