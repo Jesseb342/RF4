@@ -350,14 +350,14 @@ jobs:
               raise SystemExit("Expected shader-table validation block was not found exactly once; refusing to patch.")
 
           replacement_lines = [
-              "        if diff:",
-              "            if os.environ.get(\\"DM_REFRESH_OOT_SHADER_TABLES\\") == \\"1\\" and g.id == \\"0400486024DEC000\\":",
-              "                for name in names:",
-              "                    shutil.copyfile(tmp / \\"tables\\" / name, g.table(name))",
-              "                say(\\"OOT-only shader table refresh: replaced generated shader tables from this exact NUP; all game settings and patches remain unchanged\\")",
-              "            else:",
-              "                rows = '\\\\n'.join(table_difference(n, g.table(n).read_bytes(), (tmp / \\"tables\\" / n).read_bytes()) for n in diff)",
-              "                raise BuildError(f'the split shader tables differ from game profile {g.id}\\\\'s:\\\\n{rows}\\\\nEither these game files are not the versions the profile registers, or shader_split.py now reads them differently and the profile\\\\'s tables were not split again (the split\\\\'s tables: {tmp / \\"tables\\"})')",
+              " " * 8 + "if diff:",
+              " " * 12 + 'if os.environ.get("DM_REFRESH_OOT_SHADER_TABLES") == "1" and g.id == "0400486024DEC000":',
+              " " * 16 + "for name in names:",
+              " " * 20 + 'shutil.copyfile(tmp / "tables" / name, g.table(name))',
+              " " * 16 + 'say("OOT-only shader table refresh: replaced generated shader tables from this exact NUP; all game settings and patches remain unchanged")',
+              " " * 12 + "else:",
+              " " * 16 + 'rows = "\\n".join(table_difference(n, g.table(n).read_bytes(), (tmp / "tables" / n).read_bytes()) for n in diff)',
+              " " * 16 + 'raise BuildError("the split shader tables differ from game profile " + str(g.id) + "\'s:\\n" + rows + "\\nEither these game files are not the versions the profile registers, or shader_split.py now reads them differently and the profile tables were not split again (the split tables: " + str(tmp / "tables") + ")")',
           ]
           replacement = "\\n".join(replacement_lines)
           path.write_text(source[:match.start()] + replacement + source[match.end():])
