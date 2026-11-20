@@ -362,6 +362,23 @@ jobs:
           replacement = chr(10).join(replacement_lines) + chr(10)
           path.write_text(source[:match.start()] + replacement + source[match.end():])
           print("Installed guarded OOT-only shader-table refresh.")
+
+          # Once the OOT NUP's game files have been extracted, its 24 GB
+          # container is no longer needed. Close its mmap before unlinking it.
+          source = path.read_text()
+          extract_marker = re.compile(r"(?m)^    check_formats\\(dirs\\)\\n")
+          matches = list(extract_marker.finditer(source))
+          if len(matches) != 1:
+              raise SystemExit("Expected post-extraction check_formats marker exactly once; refusing to patch.")
+          cleanup = (
+              "    if nup and g.id == \\"0400486024DEC000\\" and not fam['dlc']:\\n"
+              "        fam['nup'].close()\\n"
+              "        fam['nup'].path.unlink()\\n"
+              "        say(\\"Removed the OOT NUP after successful extraction to free disk space for IPA packaging\\")\\n"
+          )
+          match = matches[0]
+          path.write_text(source[:match.start()] + cleanup + source[match.start():])
+          print("Installed OOT-only NUP cleanup immediately after game extraction.")
           PY
           grep -n "OOT-only shader table refresh" scripts/build_ipa_from_nsp.py
 
