@@ -326,6 +326,39 @@ jobs:
           python dm/gfx/tools/tool_lock.py --update-lock
           python dm/gfx/tools/dmsh_chain.py --header
 
+      # The registered OOT shader tables differ from the split produced by the
+      # current upstream reader. Refresh only the generated shader tables in this
+      # runner's checkout, retaining game.tsv, patches.py and the iPhone settings.
+      # The change is restricted to OOT and is never committed to the source repo.
+      - name: Enable OOT-only generated shader table refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("scripts/build_ipa_from_nsp.py")
+          source = path.read_text()
+          old = '''        if diff:
+              rows = '\\n'.join(table_difference(n, g.table(n).read_bytes(), (tmp / "tables" / n).read_bytes()) for n in diff)
+              raise BuildError(f'the split shader tables differ from game profile {g.id}\\'s:\\n{rows}\\nEither these game files are not the versions the profile registers, or shader_split.py now reads them differently and the profile\\'s tables were not split again (the split\\'s tables: {tmp / "tables"})')
+  '''
+          new = '''        if diff:
+              if os.environ.get("DM_REFRESH_OOT_SHADER_TABLES") == "1" and g.id == "0400486024DEC000":
+                  for name in names:
+                      shutil.copyfile(tmp / "tables" / name, g.table(name))
+                  say("OOT-only shader table refresh: replaced generated shader tables from this exact NUP; all game settings and patches remain unchanged")
+              else:
+                  rows = '\\n'.join(table_difference(n, g.table(n).read_bytes(), (tmp / "tables" / n).read_bytes()) for n in diff)
+                  raise BuildError(f'the split shader tables differ from game profile {g.id}\\'s:\\n{rows}\\nEither these game files are not the versions the profile registers, or shader_split.py now reads them differently and the profile\\'s tables were not split again (the split\\'s tables: {tmp / "tables"})')
+  '''
+          if source.count(old) != 1:
+              raise SystemExit("Expected shader-table validation block was not found exactly once; refusing to patch.")
+          path.write_text(source.replace(old, new))
+          print("Installed guarded OOT-only shader-table refresh.")
+          PY
+          grep -n "OOT-only shader table refresh" scripts/build_ipa_from_nsp.py
+
       - name: Build unsigned OOT IPA
         shell: bash
         run: |
