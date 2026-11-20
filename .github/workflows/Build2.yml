@@ -357,7 +357,7 @@ jobs:
               else:
                   rows = '\\n'.join(table_difference(n, g.table(n).read_bytes(), (tmp / "tables" / n).read_bytes()) for n in diff)
                   raise BuildError(f'the split shader tables differ from game profile {g.id}\\'s:\\n{rows}\\nEither these game files are not the versions the profile registers, or shader_split.py now reads them differently and the profile\\'s tables were not split again (the split\\'s tables: {tmp / "tables"})')
-"""
+          """
           path.write_text(source[:match.start()] + replacement + source[match.end():])
           print("Installed guarded OOT-only shader-table refresh.")
           PY
