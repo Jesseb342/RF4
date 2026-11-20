@@ -369,6 +369,7 @@ jobs:
           LOG="$RUNNER_TEMP/oot-build.log"
 
           echo "Building OOT directly from its NUP; no prod.keys, separate update, or DLC is required."
+          export DM_REFRESH_OOT_SHADER_TABLES=1
           echo "NUP size:"
           ls -lh "$NUP"
           echo "Free space before build:"
