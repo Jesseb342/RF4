@@ -116,7 +116,7 @@ jobs:
           GAME4_URL: ${{ secrets.Game4 }}
           UPDATE_URL: ${{ secrets.Update }}
           DLC_URL: ${{ secrets.DLC }}
-          KEYS_BASE64: ${{ secrets.Keys_URL }}
+          KEYS: ${{ secrets.Keys_URL }}
           CONTENT_SELECTION: ${{ inputs.content }}
         shell: bash
         run: |
