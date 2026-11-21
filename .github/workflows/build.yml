@@ -116,7 +116,7 @@ jobs:
           GAME4_URL: ${{ secrets.Game4 }}
           UPDATE_URL: ${{ secrets.Update }}
           DLC_URL: ${{ secrets.DLC }}
-          KEYS: ${{ secrets.Keys_URL }}
+          KEYS_BASE64: ${{ secrets.Keys }}
           CONTENT_SELECTION: ${{ inputs.content }}
         shell: bash
         run: |
@@ -223,7 +223,7 @@ jobs:
           fi
 
           if [[ -z "${KEYS_BASE64:-}" ]]; then
-            echo "::error::Keys_URL secret is empty."
+            echo "::error::Keys secret is empty."
             exit 1
           fi
 
