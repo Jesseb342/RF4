@@ -624,6 +624,23 @@ jobs:
 
           merged_fn = upstream_fn[:insertion] + bc_block + upstream_fn[insertion:]
 
+          # Upstream removed the BC-fallback ASTC-to-RGBA texture-copy helper,
+          # but the merged copy_t2t_enc() still contains its call site. Restore
+          # the helper and its Metal kernel from the BC branch before that call.
+          astc_marker = "// No BC + Legacy Device Pack:"
+          astc_end_marker = "static id<MTLTexture> copy_t2t_enc("
+          if "copy_t2t_astc(" not in working[:working.find(astc_end_marker)]:
+              astc_start = ours.find(astc_marker)
+              astc_end = ours.find(astc_end_marker, astc_start)
+              if astc_start < 0 or astc_end < 0:
+                  raise SystemExit("Could not locate the BC fallback ASTC texture-copy helper.")
+              astc_helper = ours[astc_start:astc_end]
+              astc_insert = working.find(astc_end_marker)
+              if astc_insert < 0:
+                  raise SystemExit("Could not locate copy_t2t_enc() insertion point.")
+              working = working[:astc_insert] + astc_helper + working[astc_insert:]
+              print("Restored BC fallback copy_t2t_astc() helper and Metal kernel.")
+
           work_start = working.find(function_start)
           work_end = working.find(function_end, work_start)
           if work_start < 0 or work_end < 0:
