@@ -630,7 +630,10 @@ jobs:
               raise SystemExit("Could not locate copy_b2t() in the conflicted working file.")
 
           merged = working[:work_start] + merged_fn + working[work_end:]
-          if any(marker in merged for marker in ("<<<<<<<", "=======", ">>>>>>>")):
+          if any(
+              line.startswith(("<<<<<<< ", "=======", ">>>>>>> "))
+              for line in merged.splitlines()
+          ):
               raise SystemExit("Unresolved conflict markers remain in nvn_mtl.m.")
           if "if (c->flags & DM_COPY_SNAPSHOT)" not in merged_fn:
               raise SystemExit("Upstream snapshot-copy support was not retained.")
