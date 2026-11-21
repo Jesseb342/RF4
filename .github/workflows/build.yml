@@ -542,26 +542,117 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           if ! git merge --no-edit --no-ff "$UPSTREAM_SHA"; then
-            echo "Upstream merge reported conflicts; checking whether they are limited to the known game README."
+            echo "Upstream merge reported conflicts; checking the explicitly supported conflict paths."
 
-            CONFLICT_FILE="dm/games/01007EF00011E000/README.md"
-            CONFLICTS="$(git diff --name-only --diff-filter=U)"
+            README_CONFLICT="dm/games/01007EF00011E000/README.md"
+            BC_SOURCE_CONFLICT="dm/gfx/nvn/nvn_mtl.m"
+            CONFLICTS="$(git diff --name-only --diff-filter=U | sort)"
 
-            if [[ "$CONFLICTS" != "$CONFLICT_FILE" ]]; then
-              echo "::error::Upstream merge has unexpected conflicts:"
-              printf '%s\n' "$CONFLICTS"
-              echo "::error::Only $CONFLICT_FILE may be resolved automatically. No source-code conflicts will be discarded."
+            while IFS= read -r conflict; do
+              [[ -z "$conflict" ]] && continue
+              case "$conflict" in
+                "$README_CONFLICT"|"$BC_SOURCE_CONFLICT") ;;
+                *)
+                  echo "::error::Unexpected upstream merge conflict: $conflict"
+                  echo "::error::No unreviewed source-code conflict will be discarded."
+                  exit 1
+                  ;;
+              esac
+            done <<< "$CONFLICTS"
+
+            if grep -Fxq "$README_CONFLICT" <<< "$CONFLICTS"; then
+              echo "Keeping the BC fallback branch's game README so its device-specific notes are preserved."
+              git checkout --ours -- "$README_CONFLICT"
+              git add "$README_CONFLICT"
+            fi
+
+            if grep -Fxq "$BC_SOURCE_CONFLICT" <<< "$CONFLICTS"; then
+              echo "Merging upstream's staged/snapshot texture-copy support with the BC fallback conversion paths."
+              python - "$BC_SOURCE_CONFLICT" <<'PY'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          path = sys.argv[1]
+
+          def stage(number):
+              return subprocess.check_output(
+                  ["git", "show", f":{number}:{path}"],
+                  text=True,
+              )
+
+          ours = stage(2)
+          upstream = stage(3)
+          working = Path(path).read_text()
+
+          function_start = "static void copy_b2t("
+          function_end = "\n\n// Texture copies a blit cannot do"
+
+          def function(source):
+              start = source.find(function_start)
+              if start < 0:
+                  raise SystemExit("Could not locate copy_b2t() in a merge stage.")
+              end = source.find(function_end, start)
+              if end < 0:
+                  raise SystemExit("Could not locate the end of copy_b2t().")
+              return source[start:end]
+
+          ours_fn = function(ours)
+          upstream_fn = function(upstream)
+
+          bc_start = ours_fn.find("    uint32_t upf; int ubpp;")
+          bc_end = ours_fn.find("    // Into Metal's order (rb_copy_shift)", bc_start)
+          if bc_start < 0 or bc_end < 0:
+              raise SystemExit("The expected BC fallback conversion block was not found.")
+
+          bc_block = ours_fn[bc_start:bc_end]
+          # Upstream now normalizes ordinary and staged snapshot copies into sb.
+          # Its arena buffers are CPU-readable shared Metal buffers, so the BC
+          # transcoder/decoder can consume the source through sb.contents.
+          bc_block = bc_block.replace(
+              "[(__bridge id<MTLBuffer>)mb contents]",
+              "[sb contents]",
+          )
+          if "mb" in bc_block:
+              raise SystemExit("BC block still refers to the removed mb source variable.")
+
+          insertion = upstream_fn.find("    // Into Metal's order (rb_copy_shift)")
+          if insertion < 0:
+              raise SystemExit("Upstream copy_b2t() no longer has the expected insertion point.")
+          if "uint32_t upf; int ubpp;" in upstream_fn:
+              raise SystemExit("Upstream already contains the BC block; refusing duplicate insertion.")
+
+          merged_fn = upstream_fn[:insertion] + bc_block + upstream_fn[insertion:]
+
+          work_start = working.find(function_start)
+          work_end = working.find(function_end, work_start)
+          if work_start < 0 or work_end < 0:
+              raise SystemExit("Could not locate copy_b2t() in the conflicted working file.")
+
+          merged = working[:work_start] + merged_fn + working[work_end:]
+          if any(marker in merged for marker in ("<<<<<<<", "=======", ">>>>>>>")):
+              raise SystemExit("Unresolved conflict markers remain in nvn_mtl.m.")
+          if "if (c->flags & DM_COPY_SNAPSHOT)" not in merged_fn:
+              raise SystemExit("Upstream snapshot-copy support was not retained.")
+          if "if (is_astc4(t.pixelFormat) && nvn_fmt_bc" not in merged_fn:
+              raise SystemExit("BC-to-ASTC conversion was not retained.")
+          if "if (bc_unpack(c->tex->d.format" not in merged_fn:
+              raise SystemExit("BC decompression fallback was not retained.")
+
+          Path(path).write_text(merged)
+          print("Resolved copy_b2t(): upstream DM_COPY_SNAPSHOT + BC-to-ASTC + BC decode paths retained.")
+          PY
+              git add "$BC_SOURCE_CONFLICT"
+            fi
+
+            if git diff --name-only --diff-filter=U | grep -q .; then
+              echo "::error::Unresolved merge conflicts remain after the supported resolutions."
+              git diff --name-only --diff-filter=U
               exit 1
             fi
 
-            echo "The only conflict is $CONFLICT_FILE."
-            echo "Keeping the BC fallback branch's README so its device-specific notes are preserved."
-            git checkout --ours -- "$CONFLICT_FILE"
-            git add "$CONFLICT_FILE"
-
             GIT_EDITOR=true git merge --continue
-
-            echo "Resolved the documentation-only conflict; all upstream source changes remain in the merge."
+            echo "Resolved the supported documentation and BC texture-copy conflicts without dropping either implementation."
           fi
 
           MERGED_SHA="$(git rev-parse HEAD)"
