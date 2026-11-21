@@ -586,7 +586,7 @@ jobs:
           working = Path(path).read_text()
 
           function_start = "static void copy_b2t("
-          function_end = "\n\n// Texture copies a blit cannot do"
+          function_end = "\n// Texture copies a blit cannot do"
 
           def function(source):
               start = source.find(function_start)
